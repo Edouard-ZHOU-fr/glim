@@ -70,7 +70,7 @@
       // "libimu_validator.so"
     ],
     // Topics
-    "imu_topic": "/taobotics/imu",
+    "imu_topic": "/imu",
     "points_topic": "/perception/concatenated/pointcloud",
     "image_topic": "/image",
     // QoS options
