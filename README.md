@@ -30,6 +30,52 @@ If you find this package useful for your project, please consider leaving a comm
 - 2026/01/24 : v1.2.0 released. Added Support for both **GTSAM 4.2a9** and **GTSAM 4.3a0**, and **CUDA 13.1**. Added intensity visualization support.
 - 2025/06/15 : The base GTSAM version has been changed. Make sure you have rebuilt and installed **GTSAM 4.3a0** and **gtsam_points 1.2.0**.
 
+## Milla fork: GPU memory offloading for long-term mapping
+
+[中文版](README_zh.md)
+
+With `VGICP_GPU`, every submap keeps its point cloud and voxelmaps on the GPU (~7 MB per submap with the default Milla settings), so the GPU memory grows linearly with the mapping duration (~6 GB for a 20 min drive). The global mapping module can offload the GPU data of distant submaps to CPU memory, and reload them when they get close enough to become loop candidates.
+
+### Requirement
+
+The offloading relies on a fix in **gtsam_points** (branch `feature/dynamicLoardGP`, `IntegratedVGICPDerivatives::touch_points()`): without it, factors that share an offloaded voxelmap/point cloud reload it concurrently on different CUDA streams, which results in wrong Hessians or `cudaErrorIllegalAddress`. Rebuild and install gtsam_points from that branch before enabling the feature:
+
+```bash
+cd gtsam_points && rm -rf build && mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_WITH_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=89
+make -j$(nproc) && sudo make install && sudo ldconfig
+```
+
+### Configuration (`config/config_global_mapping_gpu.json`)
+
+| Parameter | Default | Description |
+|---|---|---|
+| `enable_gpu_offload` | `true` | Enable the offloading (only with `registration_error_factor_type: "VGICP_GPU"`) |
+| `gpu_offload_keep_recent_submaps` | `80` | Latest submaps always kept on the GPU (they are still being optimized). ~1.5 s per submap |
+| `gpu_offload_prefetch_margin` | `50.0` | Submaps within `max_implicit_loop_distance + margin` [m] are reloaded in advance for loop detection |
+| `gpu_offload_distance` | `250.0` | Submaps farther than this [m] are offloaded. The gap with the prefetch distance acts as hysteresis |
+| `gpu_offload_max_resident_mb` | `4000.0` | Max GPU memory [MB] for submap data. Beyond it, least recently used submaps are also offloaded (`<= 0`: disabled) |
+| `gpu_offload_freeze_relinearization` | `true` | Offloaded submaps are not relinearized (iSAM2 reuses their cached linear factors). Keep it `true`, otherwise offloaded submaps are reloaded at every relinearization |
+
+The defaults in the code keep the upstream behavior. The Milla config enables the offloading.
+
+### Monitoring
+
+Every 100 submaps, the global mapping logs:
+
+```
+GPU offload: 120/1500 submaps on GPU (850 MB), device memory usage 5200/12282 MB (incl. CUDA memory pool)
+```
+
+Freed GPU memory stays in the CUDA memory pool and is reused by the next allocations. `nvidia-smi` and `memory_monitor` therefore stop growing but do **not** go down after offloading. Use the "submaps on GPU" value to check the offloading.
+
+### Limitations
+
+- **Full relinearization:** when a large loop closure affects more than 65% of the variables, iSAM2 relinearizes all factors, and all submaps are reloaded at once. The peak memory is then the same as without offloading. The same happens when iSAM2 is rebuilt after an indeterminant system exception.
+- **`find_overlapping_submaps`** (manual button in the viewer) reloads every submap pair within `max_implicit_loop_distance` without offloading them in between.
+- **Offline viewer:** `GlobalMapping::load()` uploads all submaps to the GPU and does not offload them. To only export points from a long map, set `registration_error_factor_type` to `"VGICP"` in `<dump>/config/config_global_mapping_gpu.json` and answer "No" to "Do optimization?" (`Export Points` only uses CPU data).
+- Not compatible with modules that evaluate `IntegratedVGICPFactorGPU` factors synchronously (`factor->error()` / `factor->linearize()` without the linearization hook), e.g., `global_mapping_pose_graph` and the scan context loop detector of glim_ext: offloaded data are only reloaded in the batch linearization path.
+
 ## Dependencies
 ### Mandatory
 - [Eigen](https://eigen.tuxfamily.org/index.php)
