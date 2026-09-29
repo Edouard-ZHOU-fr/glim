@@ -1,6 +1,7 @@
 #pragma once
 
 #include <any>
+#include <cstdint>
 #include <memory>
 #include <random>
 #include <glim/mapping/global_mapping_base.hpp>
@@ -52,6 +53,14 @@ public:
   double isam2_relinearize_thresh;
 
   double init_pose_damping_scale;
+
+  // GPU memory offloading (long-term mapping)
+  bool enable_gpu_offload;                  ///< Offload GPU data of distant submaps to CPU memory
+  int gpu_offload_keep_recent_submaps;      ///< Number of latest submaps always kept on the GPU
+  double gpu_offload_prefetch_margin;       ///< Submaps within (max_implicit_loop_distance + margin) are (re)loaded on the GPU
+  double gpu_offload_distance;              ///< Submaps farther than this distance are offloaded
+  double gpu_offload_max_resident_mb;       ///< Max GPU memory [MB] for submap data; least recently used submaps are additionally offloaded beyond it (<= 0: disabled)
+  bool gpu_offload_freeze_relinearization;  ///< Do not relinearize offloaded submaps (avoid reloading them in iSAM2 updates)
 };
 
 /**
@@ -86,6 +95,15 @@ private:
   void update_submaps();
   gtsam_points::ISAM2ResultExt update_isam2(const gtsam::NonlinearFactorGraph& new_factors, const gtsam::Values& new_values);
 
+  // GPU memory offloading
+  bool gpu_offload_enabled() const;
+  bool submap_loaded_on_gpu(int i) const;
+  size_t submap_memory_usage_gpu(int i) const;
+  std::uint64_t submap_last_accessed_time(int i) const;
+  void touch_submap(int i) const;
+  bool offload_submap(int i) const;
+  void manage_gpu_memory();
+
   void recover_graph() override;
   std::pair<gtsam::NonlinearFactorGraph, gtsam::Values> recover_graph(const gtsam::NonlinearFactorGraph& graph, const gtsam::Values& values, int start_from_frame_id) const;
 
@@ -106,6 +124,8 @@ private:
   std::unique_ptr<gtsam::NonlinearFactorGraph> new_factors;
 
   std::unique_ptr<gtsam_points::ISAM2Ext> isam2;
+
+  std::uint64_t gpu_offload_access_time;  ///< GPU data access counter at the last manage_gpu_memory() call
 
   std::shared_ptr<void> tbb_task_arena;
 };
