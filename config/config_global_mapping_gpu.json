@@ -55,8 +55,8 @@
     "use_isam2_dogleg": false,
     "isam2_relinearize_skip": 1,
     "isam2_relinearize_thresh": 0.1,
-    // GPU memory offloading
-    "enable_gpu_offload": true,
+    // GPU memory offloading-->12GB
+    "enable_gpu_offload": false,
     "gpu_offload_keep_recent_submaps": 80,
     "gpu_offload_prefetch_margin": 50.0,
     "gpu_offload_distance": 250.0,
