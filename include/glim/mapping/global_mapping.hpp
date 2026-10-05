@@ -103,6 +103,12 @@ private:
   void touch_submap(int i) const;
   bool offload_submap(int i) const;
   void manage_gpu_memory();
+  bool evict_submaps_from_gpu(const std::vector<int>& submaps_in_use) const;
+  template <typename Func>
+  void retry_on_gpu_oom(const std::vector<int>& submaps_in_use, const Func& func) const;
+
+  // Error handling
+  void halt();
 
   void recover_graph() override;
   std::pair<gtsam::NonlinearFactorGraph, gtsam::Values> recover_graph(const gtsam::NonlinearFactorGraph& graph, const gtsam::Values& values, int start_from_frame_id) const;
@@ -126,6 +132,11 @@ private:
   std::unique_ptr<gtsam_points::ISAM2Ext> isam2;
 
   std::uint64_t gpu_offload_access_time;  ///< GPU data access counter at the last manage_gpu_memory() call
+
+  // Error handling (e.g., GPU out of memory during an iSAM2 update, which may leave iSAM2 partially updated)
+  bool halted;                   ///< If true, further processing is skipped and save() writes only the committed state
+  bool isam2_partially_updated;  ///< If true, an iSAM2 update failed in the middle and its estimate must not be used
+  size_t num_committed_factors;  ///< Number of iSAM2 factors after the last successful update
 
   std::shared_ptr<void> tbb_task_arena;
 };

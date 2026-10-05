@@ -1,11 +1,22 @@
 #include <glim/mapping/async_sub_mapping.hpp>
 
+#include <spdlog/spdlog.h>
+
 namespace glim {
 
 AsyncSubMapping::AsyncSubMapping(const std::shared_ptr<glim::SubMappingBase>& sub_mapping) : sub_mapping(sub_mapping) {
   kill_switch = false;
   end_of_sequence = false;
-  thread = std::thread([this] { run(); });
+  fatal_error = false;
+  thread = std::thread([this] {
+    try {
+      run();
+    } catch (const std::exception& e) {
+      // Stop the thread instead of terminating the process so that the mapping result can be saved
+      spdlog::critical("sub mapping thread stopped by an exception ({})", e.what());
+      fatal_error = true;
+    }
+  });
 }
 
 AsyncSubMapping::~AsyncSubMapping() {
@@ -38,6 +49,10 @@ void AsyncSubMapping::join() {
 
 int AsyncSubMapping::workload() const {
   return input_frame_queue.size();
+}
+
+bool AsyncSubMapping::has_fatal_error() const {
+  return fatal_error;
 }
 
 std::vector<SubMap::Ptr> AsyncSubMapping::get_results() {

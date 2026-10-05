@@ -21,7 +21,16 @@ AsyncGlobalMapping::AsyncGlobalMapping(const std::shared_ptr<glim::GlobalMapping
 
   kill_switch = false;
   end_of_sequence = false;
-  thread = std::thread([this] { run(); });
+  fatal_error = false;
+  thread = std::thread([this] {
+    try {
+      run();
+    } catch (const std::exception& e) {
+      // Stop the thread instead of terminating the process so that the mapping result can be saved
+      logger->critical("global mapping thread stopped by an exception ({})", e.what());
+      fatal_error = true;
+    }
+  });
 }
 
 AsyncGlobalMapping::~AsyncGlobalMapping() {
@@ -58,6 +67,10 @@ void AsyncGlobalMapping::join() {
 
 int AsyncGlobalMapping::workload() const {
   return input_submap_queue.size();
+}
+
+bool AsyncGlobalMapping::has_fatal_error() const {
+  return fatal_error;
 }
 
 void AsyncGlobalMapping::save(const std::string& path) {
