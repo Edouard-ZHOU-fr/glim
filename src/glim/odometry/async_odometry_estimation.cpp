@@ -11,8 +11,17 @@ AsyncOdometryEstimation::AsyncOdometryEstimation(const std::shared_ptr<OdometryE
   this->enable_imu = enable_imu;
   kill_switch = false;
   end_of_sequence = false;
+  fatal_error = false;
   internal_frame_queue_size = 0;
-  thread = std::thread([this] { run(); });
+  thread = std::thread([this] {
+    try {
+      run();
+    } catch (const std::exception& e) {
+      // Stop the thread instead of terminating the process so that the mapping result can be saved
+      logger->critical("odometry estimation thread stopped by an exception ({})", e.what());
+      fatal_error = true;
+    }
+  });
 }
 
 AsyncOdometryEstimation::~AsyncOdometryEstimation() {
@@ -45,6 +54,10 @@ void AsyncOdometryEstimation::join() {
 
 int AsyncOdometryEstimation::workload() const {
   return input_frame_queue.size() + internal_frame_queue_size;
+}
+
+bool AsyncOdometryEstimation::has_fatal_error() const {
+  return fatal_error;
 }
 
 void AsyncOdometryEstimation::get_results(std::vector<EstimationFrame::ConstPtr>& estimation_results, std::vector<EstimationFrame::ConstPtr>& marginalized_frames) {

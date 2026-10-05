@@ -22,6 +22,14 @@
   // use_isam2_dogleg               : If true, use dogleg optimizer (robust but slow)
   // isam2_relinearize_skip         : Relinearization is performed every $isam2_relinearize_skip optimization calls
   // isam2_relinearize_thresh       : Relinearization is performed only when linear delta gets larger than this
+  //
+  // --- GPU memory offloading (long-term mapping) ---
+  // enable_gpu_offload                 : If true, offload GPU data of distant submaps to CPU memory and reload them when they become loop candidates
+  // gpu_offload_keep_recent_submaps    : Number of latest submaps always kept on the GPU
+  // gpu_offload_prefetch_margin        : Submaps within (max_implicit_loop_distance + margin) [m] are (re)loaded on the GPU
+  // gpu_offload_distance               : Submaps farther than this distance [m] are offloaded (must be larger than the prefetch distance for hysteresis)
+  // gpu_offload_max_resident_mb        : Max GPU memory [MB] for submap data. Beyond it, least recently used submaps are additionally offloaded (<= 0: disabled)
+  // gpu_offload_freeze_relinearization : If true, offloaded submaps are not relinearized (iSAM2 reuses their cached linear factors)
   */
   "global_mapping": {
     "so_name": "libglobal_mapping.so",
@@ -46,6 +54,13 @@
     // Optimizer settings
     "use_isam2_dogleg": false,
     "isam2_relinearize_skip": 1,
-    "isam2_relinearize_thresh": 0.1
+    "isam2_relinearize_thresh": 0.1,
+    // GPU memory offloading-->12GB
+    "enable_gpu_offload": false,
+    "gpu_offload_keep_recent_submaps": 80,
+    "gpu_offload_prefetch_margin": 50.0,
+    "gpu_offload_distance": 250.0,
+    "gpu_offload_max_resident_mb": 4000.0,
+    "gpu_offload_freeze_relinearization": true
   }
 }

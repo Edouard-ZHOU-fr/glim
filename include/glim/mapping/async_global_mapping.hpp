@@ -66,6 +66,12 @@ public:
   int workload() const;
 
   /**
+   * @brief Check if the global mapping thread has been stopped by an exception (e.g., GPU out of memory)
+   * @note  The mapping result committed before the failure can still be saved with save()
+   */
+  bool has_fatal_error() const;
+
+  /**
    * @brief Save the mapping result
    * @note  This method may not be thread-safe and is expected to be called after join()
    * @param path    Save path
@@ -85,6 +91,7 @@ private:
 private:
   std::atomic_bool kill_switch;      ///< Flag to stop the thread immediately (Hard kill switch)
   std::atomic_bool end_of_sequence;  ///< Flag to stop the thread when the input queues become empty (Soft kill switch)
+  std::atomic_bool fatal_error;      ///< Flag set when the thread has been stopped by an exception
   std::thread thread;
 
 #ifdef GLIM_USE_OPENCV

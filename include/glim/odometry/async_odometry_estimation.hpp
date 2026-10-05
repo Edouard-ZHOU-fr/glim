@@ -65,6 +65,11 @@ public:
   int workload() const;
 
   /**
+   * @brief Check if the odometry estimation thread has been stopped by an exception (e.g., GPU out of memory)
+   */
+  bool has_fatal_error() const;
+
+  /**
    * @brief Get the estimation results
    * @param estimation_results    Estimation results
    * @param marginalized_frames   Marginalized frames
@@ -77,6 +82,7 @@ private:
 private:
   std::atomic_bool kill_switch;      // Flag to stop the thread immediately (Hard kill switch)
   std::atomic_bool end_of_sequence;  // Flag to stop the thread when the input queues become empty (Soft kill switch)
+  std::atomic_bool fatal_error;      // Flag set when the thread has been stopped by an exception
   std::thread thread;
 
 // Input queues
