@@ -11,6 +11,14 @@
     "initialization_mode": "LOOSE",
     "initialization_window_size": 3.0,
     "init_pose_damping_scale": 1e10,
+    // Static IMU bias estimation for the "LOOSE" initialization (see config_odometry_gpu.json)
+    "use_static_imu_bias": true,
+    "static_acc_std_thresh": 0.1,
+    "static_gyro_std_thresh": 0.01,
+    "static_max_translation": 0.1,
+    "static_max_rotation": 0.003,
+    "static_imu_bias_update": "NONE",
+    "static_imu_bias_update_window": 3.0,
     // Optimizer params
     "smoother_lag": 5.0,
     "use_isam2_dogleg": false,

@@ -57,6 +57,9 @@ OdometryEstimationIMUParams::OdometryEstimationIMUParams() {
   this->init_v_world_imu = init_v_world_imu.value_or(Eigen::Vector3d::Zero());
   this->init_pose_damping_scale = config.param<double>("odometry_estimation", "init_pose_damping_scale", 1e10);
 
+  static_imu_bias_update = config.param<std::string>("odometry_estimation", "static_imu_bias_update", "NONE");
+  static_imu_bias_update_window = config.param<double>("odometry_estimation", "static_imu_bias_update_window", 3.0);
+
   smoother_lag = config.param<double>("odometry_estimation", "smoother_lag", 5.0);
   use_isam2_dogleg = config.param<bool>("odometry_estimation", "use_isam2_dogleg", false);
   isam2_relinearize_skip = config.param<int>("odometry_estimation", "isam2_relinearize_skip", 1);
@@ -75,6 +78,15 @@ OdometryEstimationIMU::OdometryEstimationIMU(std::unique_ptr<OdometryEstimationI
   marginalized_cursor = 0;
   T_lidar_imu.setIdentity();
   T_imu_lidar.setIdentity();
+  last_static_imu_bias_update = 0.0;
+
+  if (params->static_imu_bias_update != "NONE" && params->static_imu_bias_update != "OBSERVABLE" && params->static_imu_bias_update != "FULL") {
+    logger->error("unknown static_imu_bias_update mode {} (use NONE)", params->static_imu_bias_update);
+    params->static_imu_bias_update = "NONE";
+  }
+  if (params->static_imu_bias_update != "NONE" && params->static_imu_bias_update_window >= params->smoother_lag - 0.1) {
+    logger->warn("static_imu_bias_update_window must be smaller than smoother_lag, static IMU bias update will never be triggered");
+  }
 
   if (!params->estimate_init_state || params->initialization_mode == "NAIVE") {
     auto init_estimation = new NaiveInitialStateEstimation(params->T_lidar_imu, params->imu_bias);
@@ -117,6 +129,14 @@ void OdometryEstimationIMU::insert_imu(const double stamp, const Eigen::Vector3d
     init_estimation->insert_imu(stamp, linear_acc, angular_vel);
   }
   imu_integration->insert_imu(stamp, linear_acc, angular_vel);
+
+  // Old data are removed in create_static_imu_bias_factors() based on the frame time
+  // (IMU data can be ahead of the frame being processed by more than the window size)
+  if (params->static_imu_bias_update != "NONE") {
+    Eigen::Matrix<double, 7, 1> imu;
+    imu << stamp, linear_acc, angular_vel;
+    static_imu_buffer.push_back(imu);
+  }
 }
 
 EstimationFrame::ConstPtr OdometryEstimationIMU::insert_frame(const PreprocessedFrame::Ptr& raw_frame, std::vector<EstimationFrame::ConstPtr>& marginalized_frames) {
@@ -262,6 +282,9 @@ EstimationFrame::ConstPtr OdometryEstimationIMU::insert_frame(const Preprocessed
   if (params->fix_imu_bias) {
     new_factors.add(gtsam::PriorFactor<gtsam::imuBias::ConstantBias>(B(current), gtsam::imuBias::ConstantBias(params->imu_bias), gtsam::noiseModel::Isotropic::Precision(6, 1e3)));
   }
+  if (params->static_imu_bias_update != "NONE") {
+    new_factors.add(create_static_imu_bias_factors(last, current));
+  }
 
   // Create IMU factor
   gtsam::ImuFactor::shared_ptr imu_factor;
@@ -369,6 +392,68 @@ EstimationFrame::ConstPtr OdometryEstimationIMU::insert_frame(const Preprocessed
   }
 
   return frames[current];
+}
+
+gtsam::NonlinearFactorGraph OdometryEstimationIMU::create_static_imu_bias_factors(const int last, const int current) {
+  gtsam::NonlinearFactorGraph factors;
+
+  const double t_end = frames[last]->stamp;
+  const double t_begin = t_end - params->static_imu_bias_update_window;
+  while (!static_imu_buffer.empty() && static_imu_buffer.front()[0] < t_begin) {
+    static_imu_buffer.pop_front();
+  }
+
+  // One update per window
+  if (t_end - last_static_imu_bias_update < params->static_imu_bias_update_window) {
+    return factors;
+  }
+
+  // Active frames must cover the whole window
+  int first = last;
+  while (first > marginalized_cursor && frames[first - 1]->stamp >= t_begin) {
+    first--;
+  }
+  if (first <= marginalized_cursor) {
+    return factors;
+  }
+
+  std::vector<Eigen::Isometry3d> poses;
+  for (int i = first; i <= last; i++) {
+    poses.emplace_back(frames[i]->T_world_imu);
+  }
+
+  const double gravity = imu_integration->integrated_measurements().params()->n_gravity.norm();
+  const auto estimate = estimate_static_imu_bias(params->static_imu_bias_params, poses, static_imu_buffer, t_begin, t_end, gravity);
+  if (estimate.status != StaticIMUBiasEstimate::Status::STATIC) {
+    return factors;
+  }
+
+  gtsam::SharedNoiseModel noise_model;
+  if (params->static_imu_bias_update == "FULL") {
+    // The horizontal acc bias is assumed to be zero so that the roll/pitch is corrected with the gravity
+    noise_model = gtsam::noiseModel::Isotropic::Precision(6, 1e6);
+  } else {
+    // Only the gyro bias and the acc bias along the gravity are constrained
+    const Eigen::Vector3d& g = estimate.gravity_dir;
+    Eigen::Matrix<double, 6, 6> information = Eigen::Matrix<double, 6, 6>::Zero();
+    information.topLeftCorner<3, 3>() = 1e6 * g * g.transpose() + 1e-2 * (Eigen::Matrix3d::Identity() - g * g.transpose());
+    information.bottomRightCorner<3, 3>() = 1e6 * Eigen::Matrix3d::Identity();
+    noise_model = gtsam::noiseModel::Gaussian::Information(information);
+  }
+  factors.emplace_shared<gtsam::PriorFactor<gtsam::imuBias::ConstantBias>>(B(current), gtsam::imuBias::ConstantBias(estimate.imu_bias), noise_model);
+  last_static_imu_bias_update = t_end;
+
+  logger->info(
+    "static IMU bias update at {:.3f} (mode={}, acc_std={:.4f}, gyro_std={:.5f}, trans={:.3f}, rot={:.4f})",
+    t_end,
+    params->static_imu_bias_update,
+    estimate.acc_std,
+    estimate.gyro_std,
+    estimate.max_trans,
+    estimate.max_rot);
+  logger->info("static IMU bias={} current={}", convert_to_string(estimate.imu_bias), convert_to_string(frames[last]->imu_bias));
+
+  return factors;
 }
 
 std::vector<EstimationFrame::ConstPtr> OdometryEstimationIMU::get_remaining_frames() {

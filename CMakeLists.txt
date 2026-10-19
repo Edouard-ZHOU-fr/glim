@@ -72,6 +72,7 @@ add_library(glim SHARED
   # common process
   src/glim/common/imu_integration.cpp
   src/glim/common/imu_validation.cpp
+  src/glim/common/static_imu_bias.cpp
   src/glim/common/cloud_deskewing.cpp
   src/glim/common/cloud_covariance_estimation.cpp
   # odometry
