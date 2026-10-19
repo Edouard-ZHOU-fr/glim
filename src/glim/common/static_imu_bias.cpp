@@ -72,6 +72,9 @@ StaticIMUBiasEstimate estimate_static_imu_bias(
   }
 
   // Reject samples deviating from the mean by more than 2 sigma
+  // The tolerance keeps the samples of a constant axis (e.g., a quantized IMU at rest): its stddev is zero while the mean differs
+  // from the samples by rounding errors (<< 1e-9), which would reject all the samples and give a NaN mean
+  const Eigen::Array<double, 6, 1> max_deviation = 2.0 * stddev + 1e-9;
   gtsam_points::RunningStatistics<Eigen::Array3d> acc_stats;
   gtsam_points::RunningStatistics<Eigen::Array3d> gyro_stats;
   for (const auto& imu : imu_data) {
@@ -80,10 +83,10 @@ StaticIMUBiasEstimate estimate_static_imu_bias(
     }
 
     const Eigen::Array<double, 6, 1> deviation = (imu.tail<6>().array() - mean).abs();
-    if ((deviation.head<3>() <= 2.0 * stddev.head<3>()).all()) {
+    if ((deviation.head<3>() <= max_deviation.head<3>()).all()) {
       acc_stats.add(imu.middleRows<3>(1).array());
     }
-    if ((deviation.tail<3>() <= 2.0 * stddev.tail<3>()).all()) {
+    if ((deviation.tail<3>() <= max_deviation.tail<3>()).all()) {
       gyro_stats.add(imu.tail<3>().array());
     }
   }
