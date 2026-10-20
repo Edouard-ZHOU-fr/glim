@@ -5,6 +5,22 @@
   //                             : "NAIVE" simply uses the linear acceleration direction as the gravity direction
   // initialization_window_size  : Initialization window size for the "LOOSE" initialization mode
   // init_pose_damping_scale     : Damping scale for the initial pose (to fix the gauge freedom)
+  // use_static_imu_bias         : If true, the "LOOSE" initialization detects whether the sensor is static during the initialization window
+  //                             : and, if so, uses the mean IMU measurements as the initial IMU bias (gyro bias and acc bias along the gravity)
+  //                             : If the sensor is not static, the default zero-mean bias prior is used
+  // static_acc_std_thresh       : Static detection threshold for the max per-axis std of linear acc [m/s^2]
+  // static_gyro_std_thresh      : Static detection threshold for the max per-axis std of angular vel [rad/s]
+  // static_max_translation      : Static detection threshold for the LiDAR odometry translation in the window [m]
+  // static_max_rotation         : Static detection threshold for the LiDAR odometry rotation in the window [rad]
+  //                             : A constant rotation slower than static_max_rotation / initialization_window_size [rad/s] can pass
+  //                             : the detection and is absorbed into the gyro bias
+  //                             : (the static detection thresholds are shared with static_imu_bias_update)
+  // static_imu_bias_update      : Re-estimate the IMU bias every time the sensor is static during odometry estimation
+  //                             : "NONE"       : Disabled
+  //                             : "OBSERVABLE" : Constrain only the gyro bias and the acc bias along the gravity
+  //                             : "FULL"       : Also constrain the horizontal acc bias to zero so that the roll/pitch is corrected
+  //                             :                with the gravity (assumes that the true horizontal acc bias is negligible)
+  // static_imu_bias_update_window : Static detection window size for static_imu_bias_update [sec]
   //
   // --- Optimization params ---
   // smoother_lag                : Fixed-lag smoothing window size [sec]
@@ -42,6 +58,13 @@
     "initialization_mode": "LOOSE",
     "initialization_window_size": 3.0,
     "init_pose_damping_scale": 1e10,
+    "use_static_imu_bias": true,
+    "static_acc_std_thresh": 0.1,
+    "static_gyro_std_thresh": 0.01,
+    "static_max_translation": 0.1,
+    "static_max_rotation": 0.003,
+    "static_imu_bias_update": "OBSERVABLE",
+    "static_imu_bias_update_window": 3.0,
     // Optimization params
     "smoother_lag": 5.0,
     "use_isam2_dogleg": false,

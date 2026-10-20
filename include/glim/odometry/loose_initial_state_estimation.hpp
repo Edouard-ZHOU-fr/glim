@@ -1,6 +1,8 @@
 #pragma once
 
 #include <memory>
+#include <optional>
+#include <glim/common/static_imu_bias.hpp>
 #include <glim/odometry/initial_state_estimation.hpp>
 
 namespace gtsam_points {
@@ -25,10 +27,21 @@ public:
   virtual EstimationFrame::ConstPtr initial_pose() override;
 
 private:
+  /**
+   * @brief Estimate the IMU bias from the IMU data in the initialization window if the sensor is static
+   * @param gravity  Gravity magnitude used in the IMU integration
+   * @return         IMU bias [acc, gyro], or std::nullopt if the sensor is not static
+   */
+  std::optional<Eigen::Matrix<double, 6, 1>> estimate_static_imu_bias(double gravity) const;
+
+private:
   const Eigen::Isometry3d T_lidar_imu;
 
   int num_threads;
   double window_size;
+
+  bool use_static_imu_bias;
+  StaticIMUBiasParams static_imu_bias_params;
 
   std::unique_ptr<CloudCovarianceEstimation> covariance_estimation;
 

@@ -1,9 +1,11 @@
 #pragma once
 
 #include <map>
+#include <deque>
 #include <memory>
 #include <random>
 
+#include <glim/common/static_imu_bias.hpp>
 #include <glim/odometry/odometry_estimation_base.hpp>
 #include <gtsam_points/util/gtsam_migration.hpp>
 #include <gtsam_points/util/indexed_sliding_window.hpp>
@@ -52,6 +54,11 @@ public:
   Eigen::Vector3d init_v_world_imu;
   double init_pose_damping_scale;
 
+  // Static IMU bias update during odometry estimation
+  std::string static_imu_bias_update;  // "NONE", "OBSERVABLE", or "FULL"
+  double static_imu_bias_update_window;
+  StaticIMUBiasParams static_imu_bias_params;
+
   // Optimization params
   double smoother_lag;
   bool use_isam2_dogleg;
@@ -84,6 +91,14 @@ protected:
   virtual void create_frame(EstimationFrame::Ptr& frame) {}
   virtual gtsam::NonlinearFactorGraph create_factors(const int current, const gtsam_points::shared_ptr<gtsam::ImuFactor>& imu_factor, gtsam::Values& new_values) = 0;
 
+  /**
+   * @brief Create an IMU bias prior for the current frame if the sensor has been static over the last window
+   * @param last     Last frame index
+   * @param current  Current frame index
+   * @return         Bias prior factor, or an empty graph if the sensor is not static
+   */
+  gtsam::NonlinearFactorGraph create_static_imu_bias_factors(const int last, const int current);
+
   virtual void fallback_smoother() {}
   virtual void update_frames(const int current, const gtsam::NonlinearFactorGraph& new_factors);
 
@@ -108,6 +123,10 @@ protected:
   std::unique_ptr<IMUValidation> imu_validation;
   std::unique_ptr<CloudDeskewing> deskewing;
   std::unique_ptr<CloudCovarianceEstimation> covariance_estimation;
+
+  // Static IMU bias update
+  double last_static_imu_bias_update;
+  std::deque<Eigen::Matrix<double, 7, 1>> static_imu_buffer;  // Recent IMU data [stamp, acc, gyro]
 
   // Optimizer
   using FixedLagSmootherExt = gtsam_points::IncrementalFixedLagSmootherExtWithFallback;

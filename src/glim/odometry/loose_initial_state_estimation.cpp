@@ -29,6 +29,8 @@ LooseInitialStateEstimation::LooseInitialStateEstimation(const Eigen::Isometry3d
   num_threads = config.param("odometry_estimation", "num_threads", 2);
   window_size = config.param("odometry_estimation", "initialization_window_size", 1.0);
 
+  use_static_imu_bias = config.param("odometry_estimation", "use_static_imu_bias", false);
+
   target_ivox.reset(new gtsam_points::iVox(1.0));
   covariance_estimation.reset(new CloudCovarianceEstimation(num_threads));
   imu_integration.reset(new glim::IMUIntegration());
@@ -164,14 +166,26 @@ EstimationFrame::ConstPtr LooseInitialStateEstimation::initial_pose() {
     init_T_world_odom.linear() = R;
   }
 
+  // If the sensor is static, the IMU bias prior is centered at the static bias estimate with a tight noise
+  // Otherwise, a weak zero-mean prior is used
+  gtsam::imuBias::ConstantBias init_imu_bias;
+  auto imu_bias_prior_noise = gtsam::noiseModel::Isotropic::Precision(6, 10.0);
+  if (use_static_imu_bias) {
+    const auto static_imu_bias = estimate_static_imu_bias(imu_integration->integrated_measurements().params()->n_gravity.norm());
+    if (static_imu_bias) {
+      init_imu_bias = gtsam::imuBias::ConstantBias(*static_imu_bias);
+      imu_bias_prior_noise = gtsam::noiseModel::Isotropic::Precision(6, 1e6);
+    }
+  }
+
   gtsam::Values values;
   for (int i = 0; i < T_odom_lidar.size(); i++) {
     const Eigen::Isometry3d T_world_imu = init_T_world_odom * T_odom_lidar[i].second * T_lidar_imu;
     values.insert(X(i), gtsam::Pose3(T_world_imu.matrix()));
     values.insert(V(i), gtsam::Vector3(0.0, 0.0, 0.0));
-    values.insert(B(i), gtsam::imuBias::ConstantBias());
+    values.insert(B(i), init_imu_bias);
 
-    graph.emplace_shared<gtsam::PriorFactor<gtsam::imuBias::ConstantBias>>(B(i), gtsam::imuBias::ConstantBias(), gtsam::noiseModel::Isotropic::Precision(6, 10.0));
+    graph.emplace_shared<gtsam::PriorFactor<gtsam::imuBias::ConstantBias>>(B(i), init_imu_bias, imu_bias_prior_noise);
   }
 
   gtsam::LevenbergMarquardtParams lm_params;
@@ -194,6 +208,54 @@ EstimationFrame::ConstPtr LooseInitialStateEstimation::initial_pose() {
   IMUStateInitializationCallbacks::on_finished(estimated);
 
   return estimated;
+}
+
+std::optional<Eigen::Matrix<double, 6, 1>> LooseInitialStateEstimation::estimate_static_imu_bias(double gravity) const {
+  // Sensor motion in the initialization window is given by the LiDAR odometry
+  std::vector<Eigen::Isometry3d> poses;
+  for (const auto& [stamp, T_odom_lidar_i] : T_odom_lidar) {
+    poses.emplace_back(T_odom_lidar_i);
+  }
+
+  const double t_begin = T_odom_lidar.front().first;
+  const double t_end = T_odom_lidar.back().first;
+  const auto& imu_data = imu_integration->imu_data_in_queue();
+  const auto estimate = glim::estimate_static_imu_bias(static_imu_bias_params, poses, imu_data, t_begin, t_end, gravity);
+
+  switch (estimate.status) {
+    case StaticIMUBiasEstimate::Status::INSUFFICIENT_IMU:
+      logger->warn(
+        "IMU data do not cover the initialization window ({} samples in [{:.3f}, {:.3f}] sec)",
+        estimate.num_imu,
+        estimate.imu_begin - t_begin,
+        estimate.imu_end - t_begin);
+      return std::nullopt;
+
+    case StaticIMUBiasEstimate::Status::NOT_STATIC:
+      logger->info(
+        "sensor is not static (acc_std={:.4f}, gyro_std={:.5f}, trans={:.3f}, rot={:.4f}), use the default IMU bias prior",
+        estimate.acc_std,
+        estimate.gyro_std,
+        estimate.max_trans,
+        estimate.max_rot);
+      return std::nullopt;
+
+    case StaticIMUBiasEstimate::Status::STATIC:
+      break;
+  }
+
+  logger->info(
+    "sensor is static (acc_std={:.4f}, gyro_std={:.5f}, trans={:.3f}, rot={:.4f}, samples={}/{}/{})",
+    estimate.acc_std,
+    estimate.gyro_std,
+    estimate.max_trans,
+    estimate.max_rot,
+    estimate.num_acc,
+    estimate.num_gyro,
+    estimate.num_imu);
+  logger->info("static IMU bias={}", convert_to_string(estimate.imu_bias));
+
+  return estimate.imu_bias;
 }
 
 }  // namespace glim
